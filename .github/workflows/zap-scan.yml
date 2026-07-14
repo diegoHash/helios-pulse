@@ -1,0 +1,86 @@
+name: Seguridad - OWASP ZAP API Scan
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+
+jobs:
+  zap_scan:
+    runs-on: ubuntu-latest
+    name: Escanear la API (ZAP)
+
+    # 1. Levantamos un MySQL de mentira en el servidor de GitHub
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: CaribbeanCloud_Schema
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Configurar Java 21
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Compilar y levantar la API en Background
+        env:
+          # Inyectamos las credenciales temporales para que Java se conecte al MySQL de arriba
+          ETECC_DDBB_URL: jdbc:mysql://127.0.0.1:3306/CaribbeanCloud_Schema
+          ETECC_DDBB_USERNAME: root
+          ETECC_DDBB_PASS: root
+          ETECC_JWT_SECRET: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          HELIOS_PULSE_ENCRYPTION_KEY: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          ETECC_TELEGRAM_BOT_TOKEN: ""
+          ETECC_TELEGRAM_BOT_CHAT_ID: "0"
+          ETECC_WHATSAPP_TOKEN: ""
+          ETECC_WHATSAPP_PHONE_ID: ""
+          GEMINI_API_KEY: ""
+          OPENWEATHERMAP_API_KEY: ""
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew bootRun > "$RUNNER_TEMP/cbt-api.log" 2>&1 &
+
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent http://127.0.0.1:9595/helios/pulse/health | grep --quiet '^OK$'; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          tail -n 200 "$RUNNER_TEMP/cbt-api.log"
+          exit 1
+
+      - name: ZAP API Scan (Docker)
+        run: |
+          chmod a+w ${{ github.workspace }}
+          docker run --rm -v ${{ github.workspace }}:/zap/wrk/:rw --network=host -t ghcr.io/zaproxy/zaproxy@sha256:8d387b1a63e3425beef4846e39719f5af2a787753af2d8b6558c6257d7a577a2 zap-api-scan.py \
+            -t http://localhost:9595/v3/api-docs \
+            -f openapi \
+            -J report_json.json \
+            -w report_md.md \
+            -r report_html.html
+
+      - name: Upload ZAP Reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zap-scan-report
+          path: |
+            report_json.json
+            report_md.md
+            report_html.html
