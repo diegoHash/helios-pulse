@@ -17,9 +17,9 @@ public class OpenApiConfig {
 
         return new OpenAPI()
                 .info(new Info()
-                        .title("CBT API v2")
+                        .title("HELIOS Pulse API")
                         .version("2.0")
-                        .description("API para gestión de accesos y pulseras (Punto de Venta)"))
+                        .description("API de HELIOS Platform para operaciones Pulse, pulseras y punto de venta"))
                 .addSecurityItem(new SecurityRequirement().addList(securitySchemeName))
                 .components(
                     new Components()
